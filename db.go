@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -54,8 +53,7 @@ func (d *db) GetLastFetched(ctx context.Context, user string) (string, string, e
 	return data.LastFetched, data.Since, nil
 }
 
-func (d *db) PutLastFetched(ctx context.Context, user, lastFetched string) error {
-	since := time.Now().Add(-24 * time.Hour).Format("2006-01-02")
+func (d *db) PutLastFetched(ctx context.Context, user, lastFetched, since string) error {
 	item, err := attributevalue.MarshalMap(&TwFeedData{
 		User:        user,
 		LastFetched: lastFetched,
