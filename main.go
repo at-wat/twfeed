@@ -165,11 +165,11 @@ func main() {
 				log.Printf("failed to get text content: %v", err)
 				return
 			}
-			tl = append(tl, href)
 			if href == lastFetched {
 				caughtUp = true
 				break
 			}
+			tl = append(tl, href)
 		}
 
 		tweets = merge(tweets, tl)
