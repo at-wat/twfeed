@@ -19,22 +19,33 @@ const (
 )
 
 func main() {
+	after := time.After(interval)
+	defer func() {
+		log.Printf("waiting %v", interval)
+		<-after
+		log.Printf("exiting")
+	}()
+
 	username := os.Getenv("TWITTER_USER")
 	if username == "" {
-		log.Fatal("TWITTER_USER not set")
+		log.Print("TWITTER_USER not set")
+		return
 	}
 	webhook := os.Getenv("DISCORD_WEBHOOK")
 	if webhook == "" {
-		log.Fatal("DISCORD_WEBHOOK not set")
+		log.Print("DISCORD_WEBHOOK not set")
+		return
 	}
 
 	cookiesJSON, err := os.ReadFile("cookies.json")
 	if err != nil {
-		log.Fatalf("failed to load cookies.json: %v", err)
+		log.Printf("failed to load cookies.json: %v", err)
+		return
 	}
 	var cookies []playwright.OptionalCookie
 	if err := json.Unmarshal([]byte(cookiesJSON), &cookies); err != nil {
-		log.Fatalf("failed to parse cookie: %v", err)
+		log.Printf("failed to parse cookie: %v", err)
+		return
 	}
 	for i := range cookies {
 		cookies[i].SameSite = playwright.SameSiteAttributeNone
@@ -42,64 +53,75 @@ func main() {
 
 	db, err := newDB(context.TODO())
 	if err != nil {
-		log.Fatalf("failed to create DynamoDB client: %v", err)
+		log.Printf("failed to create DynamoDB client: %v", err)
+		return
 	}
 	lastFetched, since, err := db.GetLastFetched(context.TODO(), username)
 	if err != nil {
-		log.Fatalf("failed to get last_fetched: %v", err)
+		log.Printf("failed to get last_fetched: %v", err)
+		return
 	}
 
 	pw, err := playwright.Run()
 	if err != nil {
-		log.Fatalf("failed to start playwright: %v", err)
+		log.Printf("failed to start playwright: %v", err)
+		return
 	}
 	browser, err := pw.Chromium.Launch()
 	if err != nil {
-		log.Fatalf("failed to launch browser: %v", err)
+		log.Printf("failed to launch browser: %v", err)
+		return
 	}
 
 	browserContext, err := browser.NewContext(playwright.BrowserNewContextOptions{
 		Screen: &playwright.Size{Width: 1080, Height: 1920},
 	})
 	if err != nil {
-		log.Fatalf("failed to create browser context: %v", err)
+		log.Printf("failed to create browser context: %v", err)
+		return
 	}
 
 	if err := browserContext.AddCookies(cookies); err != nil {
-		log.Fatalf("failed to set cookie: %v", err)
+		log.Printf("failed to set cookie: %v", err)
+		return
 	}
-
-	after := time.After(interval)
 
 	page, err := browserContext.NewPage()
 	if err != nil {
-		log.Fatalf("failed to create page: %v", err)
+		log.Printf("failed to create page: %v", err)
+		return
 	}
 
-	waitLoad := func() {
+	waitLoad := func() error {
 		for {
 			entries, err := page.GetByRole(*playwright.AriaRoleProgressbar).All()
 			if err != nil {
-				log.Fatalf("failed to get loading: %v", err)
+				return err
 			}
 			if len(entries) == 0 {
 				break
 			}
 			time.Sleep(time.Second)
 		}
+		return nil
 	}
 
 	if _, err = page.Goto(fmt.Sprintf(
 		"https://twitter.com/%s",
 		username,
 	)); err != nil {
-		log.Fatalf("failed to goto: %v", err)
+		log.Printf("failed to goto: %v", err)
+		return
 	}
-	waitLoad()
+	if err := waitLoad(); err != nil {
+		log.Printf("failed to wait loading: %v", err)
+		return
+	}
 
 	name, err := page.Locator(`div[data-testid="UserName"] span:not(:has(span))`).First().InnerText()
 	if err != nil {
-		log.Fatalf("failed to get user name text: %v", err)
+		log.Printf("failed to get user name text: %v", err)
+		return
 	}
 	log.Printf("name: %s", name)
 
@@ -113,23 +135,29 @@ func main() {
 		"https://twitter.com/search?q=%s&src=recent_search_click&f=live",
 		query,
 	)); err != nil {
-		log.Fatalf("failed to goto: %v", err)
+		log.Printf("failed to goto: %v", err)
+		return
 	}
-	waitLoad()
+	if err := waitLoad(); err != nil {
+		log.Printf("failed to wait loading: %v", err)
+		return
+	}
 
 	var tweets []string
 
 	for try := 0; try < maxTry; try++ {
 		entries, err := page.Locator("article").All()
 		if err != nil {
-			log.Fatalf("failed to get articles: %v", err)
+			log.Printf("failed to get articles: %v", err)
+			return
 		}
 		var tl []string
 		var caughtUp bool
 		for _, entry := range entries {
 			href, err := entry.Locator("a:has(time)").GetAttribute("href")
 			if err != nil {
-				log.Fatalf("failed to get text content: %v", err)
+				log.Printf("failed to get text content: %v", err)
+				return
 			}
 			tl = append(tl, href)
 			if href == lastFetched {
@@ -151,7 +179,8 @@ func main() {
 
 		ret, err := page.Evaluate("document.documentElement.scrollHeight - document.documentElement.clientHeight - document.documentElement.scrollTop <= 1")
 		if err != nil {
-			log.Fatalf("failed to evaluate: %v", err)
+			log.Printf("failed to evaluate: %v", err)
+			return
 		}
 		if bottom, _ := ret.(bool); bottom {
 			log.Print("hit page bottom")
@@ -159,10 +188,14 @@ func main() {
 		}
 
 		if err := page.Mouse().Wheel(0, 1000); err != nil {
-			log.Fatalf("failed to scroll: %v", err)
+			log.Printf("failed to scroll: %v", err)
+			return
 		}
 		time.Sleep(time.Second)
-		waitLoad()
+		if err := waitLoad(); err != nil {
+			log.Printf("failed to wait loading: %v", err)
+			return
+		}
 	}
 
 	var lastPosted string
@@ -179,21 +212,22 @@ func main() {
 
 	if lastPosted != "" {
 		if err := db.PutLastFetched(context.TODO(), username, lastPosted); err != nil {
-			log.Fatalf("failed to put last_fetched: %v", err)
+			log.Printf("failed to put last_fetched: %v", err)
+			return
 		}
 	}
 
 	if err := page.Close(); err != nil {
-		log.Fatalf("failed to close page: %v", err)
+		log.Printf("failed to close page: %v", err)
+		return
 	}
 
 	if err := browser.Close(); err != nil {
-		log.Fatalf("failed to close browser: %v", err)
+		log.Printf("failed to close browser: %v", err)
+		return
 	}
 	if err := pw.Stop(); err != nil {
-		log.Fatalf("failed to stop Playwright: %v", err)
+		log.Printf("failed to stop Playwright: %v", err)
+		return
 	}
-
-	log.Printf("waiting %v", interval)
-	<-after
 }
