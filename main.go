@@ -135,6 +135,7 @@ func main() {
 	if since != "" {
 		query = fmt.Sprintf("(%s) since:%s", query, since)
 	}
+	query = query + " include:nativeretweets"
 	log.Printf("query: %s", query)
 
 	if _, err = page.Goto(fmt.Sprintf(
