@@ -23,7 +23,7 @@ func main() {
 	defer func() {
 		log.Printf("waiting %v", interval)
 		<-after
-		log.Printf("exiting")
+		log.Print("exiting")
 	}()
 
 	username := os.Getenv("TWITTER_USER")
