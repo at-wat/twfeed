@@ -203,21 +203,26 @@ func main() {
 			return
 		}
 	}
+	log.Println(len(tweets), "tweets fetched")
 
 	var lastPosted string
+	postedAll := true
 	for i := len(tweets) - 1; i >= 0; i-- {
 		log.Println(tweets[i])
 		if err := postDiscord(username, name, tweets[i], webhook); err != nil {
+			postedAll = false
 			log.Printf("failed to post: %v", err)
 			break
 		}
 		lastPosted = tweets[i]
 		time.Sleep(discordPostInterval)
 	}
-	log.Println(len(tweets), "tweets fetched")
 
 	if lastPosted != "" {
-		if err := db.PutLastFetched(context.TODO(), username, lastPosted); err != nil {
+		if postedAll {
+			since = time.Now().Add(-24 * time.Hour).Format("2006-01-02")
+		}
+		if err := db.PutLastFetched(context.TODO(), username, lastPosted, since); err != nil {
 			log.Printf("failed to put last_fetched: %v", err)
 			return
 		}
