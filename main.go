@@ -69,127 +69,122 @@ func main() {
 		log.Fatalf("failed to set cookie: %v", err)
 	}
 
-	tick := time.NewTicker(interval)
-	defer tick.Stop()
+	after := time.After(interval)
 
-	for {
-		page, err := browserContext.NewPage()
-		if err != nil {
-			log.Fatalf("failed to create page: %v", err)
-		}
+	page, err := browserContext.NewPage()
+	if err != nil {
+		log.Fatalf("failed to create page: %v", err)
+	}
 
-		waitLoad := func() {
-			for {
-				entries, err := page.GetByRole(*playwright.AriaRoleProgressbar).All()
-				if err != nil {
-					log.Fatalf("failed to get loading: %v", err)
-				}
-				if len(entries) == 0 {
-					break
-				}
-				time.Sleep(time.Second)
-			}
-		}
-
-		if _, err = page.Goto(fmt.Sprintf(
-			"https://twitter.com/%s",
-			username,
-		)); err != nil {
-			log.Fatalf("failed to goto: %v", err)
-		}
-		waitLoad()
-
-		name, err := page.Locator(`div[data-testid="UserName"] span:not(:has(span))`).First().InnerText()
-		if err != nil {
-			log.Fatalf("failed to get user name text: %v", err)
-		}
-		log.Printf("name: %s", name)
-
-		query := fmt.Sprintf("from:@%s", username)
-		if since != "" {
-			query = fmt.Sprintf("(%s) since:%s", query, since)
-		}
-		log.Printf("query: %s", query)
-
-		if _, err = page.Goto(fmt.Sprintf(
-			"https://twitter.com/search?q=%s&src=recent_search_click&f=live",
-			query,
-		)); err != nil {
-			log.Fatalf("failed to goto: %v", err)
-		}
-		waitLoad()
-
-		var tweets []string
-
-		for try := 0; try < maxTry; try++ {
-			entries, err := page.Locator("article").All()
+	waitLoad := func() {
+		for {
+			entries, err := page.GetByRole(*playwright.AriaRoleProgressbar).All()
 			if err != nil {
-				log.Fatalf("failed to get articles: %v", err)
+				log.Fatalf("failed to get loading: %v", err)
 			}
-			var tl []string
-			var caughtUp bool
-			for _, entry := range entries {
-				href, err := entry.Locator("a:has(time)").GetAttribute("href")
-				if err != nil {
-					log.Fatalf("failed to get text content: %v", err)
-				}
-				tl = append(tl, href)
-				if href == lastFetched {
-					caughtUp = true
-					break
-				}
-			}
-
-			tweets = merge(tweets, tl)
-
-			if caughtUp {
-				log.Print("caught up", lastFetched)
+			if len(entries) == 0 {
 				break
-			}
-			if len(entries) >= maxFetch || lastFetched == "" {
-				log.Print("reached max fetch count")
-				break
-			}
-
-			ret, err := page.Evaluate("document.documentElement.scrollHeight - document.documentElement.clientHeight - document.documentElement.scrollTop <= 1")
-			if err != nil {
-				log.Fatalf("failed to evaluate: %v", err)
-			}
-			if bottom, _ := ret.(bool); bottom {
-				log.Print("hit page bottom")
-				break
-			}
-
-			if err := page.Mouse().Wheel(0, 1000); err != nil {
-				log.Fatalf("failed to scroll: %v", err)
 			}
 			time.Sleep(time.Second)
-			waitLoad()
 		}
+	}
 
-		var lastPosted string
-		for i := len(tweets) - 1; i >= 0; i-- {
-			log.Println(tweets[i])
-			if err := postDiscord(username, name, tweets[i], webhook); err != nil {
-				log.Printf("failed to post: %v", err)
+	if _, err = page.Goto(fmt.Sprintf(
+		"https://twitter.com/%s",
+		username,
+	)); err != nil {
+		log.Fatalf("failed to goto: %v", err)
+	}
+	waitLoad()
+
+	name, err := page.Locator(`div[data-testid="UserName"] span:not(:has(span))`).First().InnerText()
+	if err != nil {
+		log.Fatalf("failed to get user name text: %v", err)
+	}
+	log.Printf("name: %s", name)
+
+	query := fmt.Sprintf("from:@%s", username)
+	if since != "" {
+		query = fmt.Sprintf("(%s) since:%s", query, since)
+	}
+	log.Printf("query: %s", query)
+
+	if _, err = page.Goto(fmt.Sprintf(
+		"https://twitter.com/search?q=%s&src=recent_search_click&f=live",
+		query,
+	)); err != nil {
+		log.Fatalf("failed to goto: %v", err)
+	}
+	waitLoad()
+
+	var tweets []string
+
+	for try := 0; try < maxTry; try++ {
+		entries, err := page.Locator("article").All()
+		if err != nil {
+			log.Fatalf("failed to get articles: %v", err)
+		}
+		var tl []string
+		var caughtUp bool
+		for _, entry := range entries {
+			href, err := entry.Locator("a:has(time)").GetAttribute("href")
+			if err != nil {
+				log.Fatalf("failed to get text content: %v", err)
+			}
+			tl = append(tl, href)
+			if href == lastFetched {
+				caughtUp = true
 				break
 			}
-			lastPosted = tweets[i]
-			time.Sleep(discordPostInterval)
-		}
-		log.Println(len(tweets), "tweets fetched")
-
-		if lastPosted != "" {
-			if err := db.PutLastFetched(context.TODO(), username, lastPosted); err != nil {
-				log.Fatalf("failed to put last_fetched: %v", err)
-			}
 		}
 
-		if err := page.Close(); err != nil {
-			log.Fatalf("failed to close page: %v", err)
+		tweets = merge(tweets, tl)
+
+		if caughtUp {
+			log.Print("caught up", lastFetched)
+			break
 		}
-		log.Printf("waiting %v", interval)
-		<-tick.C
+		if len(entries) >= maxFetch || lastFetched == "" {
+			log.Print("reached max fetch count")
+			break
+		}
+
+		ret, err := page.Evaluate("document.documentElement.scrollHeight - document.documentElement.clientHeight - document.documentElement.scrollTop <= 1")
+		if err != nil {
+			log.Fatalf("failed to evaluate: %v", err)
+		}
+		if bottom, _ := ret.(bool); bottom {
+			log.Print("hit page bottom")
+			break
+		}
+
+		if err := page.Mouse().Wheel(0, 1000); err != nil {
+			log.Fatalf("failed to scroll: %v", err)
+		}
+		time.Sleep(time.Second)
+		waitLoad()
+	}
+
+	var lastPosted string
+	for i := len(tweets) - 1; i >= 0; i-- {
+		log.Println(tweets[i])
+		if err := postDiscord(username, name, tweets[i], webhook); err != nil {
+			log.Printf("failed to post: %v", err)
+			break
+		}
+		lastPosted = tweets[i]
+		time.Sleep(discordPostInterval)
+	}
+	log.Println(len(tweets), "tweets fetched")
+
+	if lastPosted != "" {
+		if err := db.PutLastFetched(context.TODO(), username, lastPosted); err != nil {
+			log.Fatalf("failed to put last_fetched: %v", err)
+		}
+	}
+
+	if err := page.Close(); err != nil {
+		log.Fatalf("failed to close page: %v", err)
 	}
 
 	if err := browser.Close(); err != nil {
@@ -198,4 +193,7 @@ func main() {
 	if err := pw.Stop(); err != nil {
 		log.Fatalf("failed to stop Playwright: %v", err)
 	}
+
+	log.Printf("waiting %v", interval)
+	<-after
 }
