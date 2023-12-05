@@ -28,9 +28,15 @@ func main() {
 		log.Fatal("DISCORD_WEBHOOK not set")
 	}
 
-	cookiesJSON, err := os.ReadFile("cookies.json")
-	if err != nil {
-		log.Fatalf("failed to load cookies.json: %v", err)
+	var cookiesJSON []byte
+	if cookiesEnv := os.Getenv("COOKIES"); cookiesEnv != "" {
+		cookiesJSON = []byte(cookiesEnv)
+	} else {
+		var err error
+		cookiesJSON, err = os.ReadFile("cookies.json")
+		if err != nil {
+			log.Fatalf("failed to load cookies.json: %v", err)
+		}
 	}
 	var cookies []playwright.OptionalCookie
 	if err := json.Unmarshal([]byte(cookiesJSON), &cookies); err != nil {
