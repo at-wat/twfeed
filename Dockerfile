@@ -1,4 +1,4 @@
-FROM golang:1.21-bookworm AS builder
+FROM golang:1.24-bookworm AS builder
 
 RUN go run github.com/playwright-community/playwright-go/cmd/playwright@latest install chromium --with-deps
 
