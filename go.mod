@@ -1,6 +1,6 @@
 module github.com/at-wat/twfeed
 
-go 1.21.0
+go 1.22
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.23.5
